@@ -1,4 +1,3 @@
---!strict
 -- [c4] BABFT Studio v2 — Setup (PC/Mobile, RU/EN, Themes), Minimize, .build Loader & Reset Farm
 
 local Players = game:GetService("Players")
