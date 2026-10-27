@@ -1,4 +1,4 @@
--- [c4] BABFT Studio v2 — Setup (PC/Mobile, RU/EN, Themes), Minimize, .build Loader & Reset Farm
+-- [c4] BABFT Studio v2 — Delta Mobile Fixed (no type annotations)
 
 local Players = game:GetService("Players")
 local TweenService = game:GetService("TweenService")
@@ -11,13 +11,13 @@ local LocalPlayer = Players.LocalPlayer
 local PlayerGui = LocalPlayer:WaitForChild("PlayerGui")
 
 -- ============================================================================
--- CONFIG, THEMES & LOCALIZATION (I18N)
+-- CONFIG, THEMES & LOCALIZATION
 -- ============================================================================
 local Config = {
 	ToggleKey = Enum.KeyCode.Insert,
-	Platform = "PC", -- "PC" | "Mobile"
-	Language = "RU", -- "RU" | "EN"
-	Theme = "Monochrome", -- "Monochrome" | "Midnight" | "Crimson"
+	Platform = "PC",
+	Language = "RU",
+	Theme = "Monochrome",
 	BuildDelay = 0.05,
 	UseRelativeOrigin = false,
 	AutoFarmActive = false,
@@ -25,21 +25,7 @@ local Config = {
 	SelectedFile = "",
 }
 
-type ThemePalette = {
-	Bg: Color3,
-	Panel: Color3,
-	Card: Color3,
-	Accent: Color3,
-	AccentText: Color3,
-	Text: Color3,
-	SubText: Color3,
-	Stroke: Color3,
-	Good: Color3,
-	Bad: Color3,
-}
-
-local Themes: { [string]: ThemePalette } = {
-	-- По умолчанию: строго черно-белая (Monochrome)
+local Themes = {
 	["Monochrome"] = {
 		Bg         = Color3.fromRGB(10, 10, 10),
 		Panel      = Color3.fromRGB(18, 18, 18),
@@ -78,7 +64,7 @@ local Themes: { [string]: ThemePalette } = {
 	},
 }
 
-local I18n: { [string]: { [string]: string } } = {
+local I18n = {
 	["RU"] = {
 		SetupTitle = "НАСТРОЙКА СКРИПТА",
 		PlatformLbl = "Устройство (PC / Mobile):",
@@ -102,7 +88,7 @@ local I18n: { [string]: { [string]: string } } = {
 		FileSelected = "Файл: ",
 		FileNone = "Файл не выбран",
 		MetaFormat = "Версия: %s  |  Деталей: %d  |  Типов: %d",
-		SelectFileBtn = "Выбрать .build файл ▾",
+		SelectFileBtn = "Выбрать .build файл",
 		RescanBtn = "Обновить",
 		CoordWorld = "Коорд: World",
 		CoordPlot = "Коорд: Plot",
@@ -111,7 +97,7 @@ local I18n: { [string]: { [string]: string } } = {
 		BuildReady = "Готов к постройке",
 		BuildProgress = "Сборка [%d/%d]: %s",
 		BuildDone = "Сборка завершена",
-		ItemStatsFormat = "Есть: %d   |   Еще надо: %d   |   Всего нужно: %d",
+		ItemStatsFormat = "Есть: %d   |   Надо: %d   |   Всего: %d",
 		SelectPreset = "Выбрать",
 	},
 	["EN"] = {
@@ -137,7 +123,7 @@ local I18n: { [string]: { [string]: string } } = {
 		FileSelected = "File: ",
 		FileNone = "No file selected",
 		MetaFormat = "Version: %s  |  Blocks: %d  |  Types: %d",
-		SelectFileBtn = "Select .build file ▾",
+		SelectFileBtn = "Select .build file",
 		RescanBtn = "Rescan",
 		CoordWorld = "Coord: World",
 		CoordPlot = "Coord: Plot",
@@ -151,19 +137,19 @@ local I18n: { [string]: { [string]: string } } = {
 	},
 }
 
-local function tr(key: string): string
+local function tr(key)
 	local dict = I18n[Config.Language] or I18n["RU"]
 	return dict[key] or key
 end
 
-local function getPalette(): ThemePalette
+local function getPalette()
 	return Themes[Config.Theme] or Themes["Monochrome"]
 end
 
 -- ============================================================================
--- BLOCK METADATA & EMBEDDED .BUILD SAMPLE
+-- BLOCK METADATA & EMBEDDED SAMPLE
 -- ============================================================================
-local BlockMeta: { [string]: { Icon: string, Display: string } } = {
+local BlockMeta = {
 	["BackWheel"]     = { Icon = "rbxassetid://6031260781", Display = "Back Wheel" },
 	["Camera"]        = { Icon = "rbxassetid://6031094670", Display = "Camera" },
 	["CarSeat"]       = { Icon = "rbxassetid://6031094678", Display = "Car Seat" },
@@ -188,28 +174,9 @@ local EmbeddedSampleJSON = [[{"AutoBuild_Version":"v1","Data":{"BackWheel":[{"An
 -- ============================================================================
 -- PARSER (.build v1)
 -- ============================================================================
-export type ParsedBlock = {
-	BlockType: string,
-	ID: number,
-	CF: CFrame,
-	Size: Vector3,
-	Color: Color3,
-	Anchored: boolean,
-	CanCollide: boolean,
-}
+local LoadedBuilds = {}
 
-export type ParsedBuildFile = {
-	FileName: string,
-	Version: string,
-	TotalBlocks: number,
-	Requirements: { [string]: number },
-	Queue: { ParsedBlock },
-	CenterCF: CFrame,
-}
-
-local LoadedBuilds: { [string]: ParsedBuildFile } = {}
-
-local function hexToColor3(hex: string): Color3
+local function hexToColor3(hex)
 	local clean = string.gsub(hex, "#", "")
 	if #clean ~= 6 then return Color3.fromRGB(255, 255, 255) end
 	return Color3.fromRGB(
@@ -219,7 +186,7 @@ local function hexToColor3(hex: string): Color3
 	)
 end
 
-local function arrayToCFrame(arr: { number }): CFrame
+local function arrayToCFrame(arr)
 	if #arr >= 12 then
 		return CFrame.new(
 			arr[1], arr[2], arr[3],
@@ -233,12 +200,12 @@ local function arrayToCFrame(arr: { number }): CFrame
 	return CFrame.new()
 end
 
-local function parseBuildJSON(fileName: string, rawJson: string): ParsedBuildFile?
+local function parseBuildJSON(fileName, rawJson)
 	local ok, decoded = pcall(function() return HttpService:JSONDecode(rawJson) end)
 	if not ok or type(decoded) ~= "table" or type(decoded.Data) ~= "table" then return nil end
 
-	local requirements: { [string]: number } = {}
-	local queue: { ParsedBlock } = {}
+	local requirements = {}
+	local queue = {}
 	local sumPos = Vector3.zero
 	local totalCount = 0
 
@@ -247,9 +214,9 @@ local function parseBuildJSON(fileName: string, rawJson: string): ParsedBuildFil
 			requirements[blockType] = (requirements[blockType] or 0) + #instances
 			for _, item in ipairs(instances) do
 				local cf = arrayToCFrame(item.CFrame or {})
-				local sz = item.Size or { 2, 2, 2 }
-				totalCount += 1
-				sumPos += cf.Position
+				local sz = item.Size or {2, 2, 2}
+				totalCount = totalCount + 1
+				sumPos = sumPos + cf.Position
 				table.insert(queue, {
 					BlockType = blockType,
 					ID = tonumber(item.ID) or totalCount,
@@ -276,12 +243,12 @@ local function parseBuildJSON(fileName: string, rawJson: string): ParsedBuildFil
 	}
 end
 
-local function scanWorkspaceBuildFiles(): { string }
+local function scanWorkspaceBuildFiles()
 	table.clear(LoadedBuilds)
-	local names: { string } = {}
+	local names = {}
 
-	local listfilesFn = (getfenv() :: any).listfiles
-	local readfileFn = (getfenv() :: any).readfile
+	local listfilesFn = listfiles or (getfenv() and getfenv().listfiles)
+	local readfileFn = readfile or (getfenv() and getfenv().readfile)
 
 	if type(listfilesFn) == "function" and type(readfileFn) == "function" then
 		local ok, files = pcall(listfilesFn, "")
@@ -333,7 +300,7 @@ end
 -- ============================================================================
 -- GOLD TELEMETRY & INVENTORY HELPERS
 -- ============================================================================
-local function readPlayerGold(): number
+local function readPlayerGold()
 	local dataFolder = LocalPlayer:FindFirstChild("Data")
 	if dataFolder then
 		local g = dataFolder:FindFirstChild("Gold")
@@ -359,23 +326,23 @@ local GoldTracker = {
 	HourlyRate = 0,
 }
 
-local function formatNumber(n: number): string
+local function formatNumber(n)
 	local s = tostring(math.floor(n))
-	return (string.gsub(s, "^(-?%d+)(%d%d%d)", "%1,%2"):gsub("(%d)(%d%d%d)$", "%1,%2"))
+	local result = string.gsub(s, "^(-?%d+)(%d%d%d)", "%1,%2")
+	return result
 end
 
 local function updateGoldTelemetry()
 	local nowGold = readPlayerGold()
 	if nowGold > GoldTracker.CurrentGold then
-		GoldTracker.SessionGained += (nowGold - GoldTracker.CurrentGold)
+		GoldTracker.SessionGained = GoldTracker.SessionGained + (nowGold - GoldTracker.CurrentGold)
 	end
 	GoldTracker.CurrentGold = nowGold
-
 	local elapsedHours = math.max((os.clock() - GoldTracker.StartTime) / 3600, 1 / 3600)
 	GoldTracker.HourlyRate = math.floor(GoldTracker.SessionGained / elapsedHours)
 end
 
-local function getOwnedBlockCount(blockType: string): number
+local function getOwnedBlockCount(blockType)
 	local dataFolder = LocalPlayer:FindFirstChild("Data") or LocalPlayer:FindFirstChild("Inventory")
 	if dataFolder then
 		local valObj = dataFolder:FindFirstChild(blockType)
@@ -386,17 +353,20 @@ local function getOwnedBlockCount(blockType: string): number
 	return 0
 end
 
-local function getTeamZoneOrigin(): CFrame
+local function getTeamZoneOrigin()
 	local team = LocalPlayer.Team
 	if team then
 		local zone = Workspace:FindFirstChild(team.Name .. "Zone") or Workspace:FindFirstChild(team.Name)
-		if zone and zone:IsA("BasePart") then return zone.CFrame
-		elseif zone and zone:IsA("Model") and zone.PrimaryPart then return zone.PrimaryPart.CFrame end
+		if zone and zone:IsA("BasePart") then
+			return zone.CFrame
+		elseif zone and zone:IsA("Model") and zone.PrimaryPart then
+			return zone.PrimaryPart.CFrame
+		end
 	end
 	return CFrame.new(0, 800, 0)
 end
 
-local function deployBlock(block: ParsedBlock, targetCF: CFrame)
+local function deployBlock(block, targetCF)
 	local placeRemote = ReplicatedStorage:FindFirstChild("PlaceBlock", true)
 	if placeRemote and placeRemote:IsA("RemoteFunction") then
 		pcall(function() placeRemote:InvokeServer(block.BlockType, targetCF, block.Anchored, block.CanCollide) end)
@@ -406,16 +376,17 @@ local function deployBlock(block: ParsedBlock, targetCF: CFrame)
 end
 
 -- ============================================================================
--- UNIVERSAL DRAG HELPER (PC MOUSE + MOBILE TOUCH)
+-- DRAG HELPER (PC + MOBILE TOUCH)
 -- ============================================================================
-local function makeDraggable(handle: GuiObject, target: GuiObject)
+local function makeDraggable(handle, target)
 	local dragging = false
-	local dragInput: InputObject? = nil
+	local dragInput = nil
 	local dragStart = Vector3.zero
 	local startPos = UDim2.new()
 
 	handle.InputBegan:Connect(function(input)
-		if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+		if input.UserInputType == Enum.UserInputType.MouseButton1
+			or input.UserInputType == Enum.UserInputType.Touch then
 			dragging = true
 			dragStart = input.Position
 			startPos = target.Position
@@ -428,7 +399,8 @@ local function makeDraggable(handle: GuiObject, target: GuiObject)
 	end)
 
 	handle.InputChanged:Connect(function(input)
-		if input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch then
+		if input.UserInputType == Enum.UserInputType.MouseMovement
+			or input.UserInputType == Enum.UserInputType.Touch then
 			dragInput = input
 		end
 	end)
@@ -458,30 +430,30 @@ ScreenGui.ResetOnSpawn = false
 ScreenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
 ScreenGui.Parent = PlayerGui
 
--- Реестр объектов для динамической перекраски при смене темы
-local ThemedObjects: { { Obj: Instance, Prop: string, Key: string } } = {}
-local function bindTheme(obj: Instance, prop: string, key: string)
-	table.insert(ThemedObjects, { Obj = obj, Prop = prop, Key = key })
+local ThemedObjects = {}
+
+local function bindTheme(obj, prop, key)
+	table.insert(ThemedObjects, {Obj = obj, Prop = prop, Key = key})
 	local pal = getPalette()
-	;(obj :: any)[prop] = (pal :: any)[key]
+	obj[prop] = pal[key]
 end
 
 local function applyThemeAll()
 	local pal = getPalette()
 	for _, entry in ipairs(ThemedObjects) do
 		if entry.Obj and entry.Obj.Parent then
-			;(entry.Obj :: any)[entry.Prop] = (pal :: any)[entry.Key]
+			entry.Obj[entry.Prop] = pal[entry.Key]
 		end
 	end
 end
 
 -- ============================================================================
--- FLOATING MINIMIZED PILL (СВЕРНУТЫЙ ВИДЖЕТ)
+-- MINI PILL
 -- ============================================================================
 local MiniPill = Instance.new("TextButton")
 MiniPill.Size = UDim2.fromOffset(150, 38)
 MiniPill.Position = UDim2.new(0.5, -75, 0.06, 0)
-MiniPill.Text = "[c4] BABFT  ▴"
+MiniPill.Text = "[c4] BABFT"
 MiniPill.Font = Enum.Font.GothamBold
 MiniPill.TextSize = 13
 MiniPill.Visible = false
@@ -506,7 +478,7 @@ MainFrame.Size = UDim2.fromOffset(720, 450)
 MainFrame.Position = UDim2.fromScale(0.5, 0.5)
 MainFrame.AnchorPoint = Vector2.new(0.5, 0.5)
 MainFrame.BorderSizePixel = 0
-MainFrame.Visible = false -- Показывается после стартовой настройки
+MainFrame.Visible = false
 MainFrame.Parent = ScreenGui
 Instance.new("UICorner", MainFrame).CornerRadius = UDim.new(0, 10)
 bindTheme(MainFrame, "BackgroundColor3", "Bg")
@@ -520,7 +492,6 @@ MainStroke.Thickness = 1.5
 MainStroke.Parent = MainFrame
 bindTheme(MainStroke, "Color", "Stroke")
 
--- TopBar (Перетаскивание + Сворачивание)
 local TopBar = Instance.new("Frame")
 TopBar.Size = UDim2.new(1, 0, 0, 42)
 TopBar.BorderSizePixel = 0
@@ -541,11 +512,10 @@ TitleLabel.TextXAlignment = Enum.TextXAlignment.Left
 TitleLabel.Parent = TopBar
 bindTheme(TitleLabel, "TextColor3", "Text")
 
--- Кнопка сворачивания (—)
 local MinimizeBtn = Instance.new("TextButton")
 MinimizeBtn.Size = UDim2.fromOffset(32, 28)
 MinimizeBtn.Position = UDim2.new(1, -42, 0.5, -14)
-MinimizeBtn.Text = "—"
+MinimizeBtn.Text = "-"
 MinimizeBtn.Font = Enum.Font.GothamBold
 MinimizeBtn.TextSize = 14
 MinimizeBtn.Parent = TopBar
@@ -563,7 +533,6 @@ MiniPill.MouseButton1Click:Connect(function()
 	MainFrame.Visible = true
 end)
 
--- Сайдбар
 local Sidebar = Instance.new("Frame")
 Sidebar.Size = UDim2.new(0, 165, 1, -54)
 Sidebar.Position = UDim2.fromOffset(10, 48)
@@ -588,8 +557,8 @@ PagesFolder.Position = UDim2.fromOffset(182, 48)
 PagesFolder.BackgroundTransparency = 1
 PagesFolder.Parent = MainFrame
 
-local Pages: { [string]: ScrollingFrame } = {}
-local TabButtons: { [string]: TextButton } = {}
+local Pages = {}
+local TabButtons = {}
 local ActiveTabKey = "Farm"
 
 local function updateTabStyles()
@@ -601,13 +570,15 @@ local function updateTabStyles()
 	end
 end
 
-local function switchTab(key: string)
+local function switchTab(key)
 	ActiveTabKey = key
-	for k, p in pairs(Pages) do p.Visible = (k == key) end
+	for k, p in pairs(Pages) do
+		p.Visible = (k == key)
+	end
 	updateTabStyles()
 end
 
-local function createTab(key: string, order: number): ScrollingFrame
+local function createTab(key, order)
 	local btn = Instance.new("TextButton")
 	btn.Size = UDim2.new(1, -16, 0, 36)
 	btn.LayoutOrder = order
@@ -650,7 +621,7 @@ local PageWorkshop = createTab("Workshop", 3)
 local PageSettings = createTab("Settings", 4)
 
 -- ============================================================================
--- TAB 1: AUTO FARM (МЕТОД РЕСЕТА + СТАТИСТИКА: ЕСТЬ / СОБРАНО / В ЧАС)
+-- TAB 1: AUTO FARM
 -- ============================================================================
 local StatsGrid = Instance.new("Frame")
 StatsGrid.Size = UDim2.new(1, 0, 0, 74)
@@ -663,7 +634,7 @@ StatsLayout.FillDirection = Enum.FillDirection.Horizontal
 StatsLayout.Padding = UDim.new(0, 8)
 StatsLayout.Parent = StatsGrid
 
-local function createStatBox(order: number): (TextLabel, TextLabel)
+local function createStatBox(order)
 	local box = Instance.new("Frame")
 	box.Size = UDim2.new(0.333, -6, 1, 0)
 	box.LayoutOrder = order
@@ -771,11 +742,10 @@ ResetStatsBtn.MouseButton1Click:Connect(function()
 	refreshGoldLabels()
 end)
 
--- Цикл фарма методом быстрого прохода этапов + мгновенного ресета (выдает золото частями каждую секунду)
 local function runResetFarmCycle()
 	local char = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
-	local hrp = char:WaitForChild("HumanoidRootPart", 5) :: BasePart?
-	local hum = char:WaitForChild("Humanoid", 5) :: Humanoid?
+	local hrp = char:WaitForChild("HumanoidRootPart", 5)
+	local hum = char:WaitForChild("Humanoid", 5)
 	if not hrp or not hum or hum.Health <= 0 then return end
 
 	local bv = Instance.new("BodyVelocity")
@@ -787,7 +757,6 @@ local function runResetFarmCycle()
 	local normalStages = boatStages and boatStages:FindFirstChild("NormalStages")
 	local claimRemote = Workspace:FindFirstChild("ClaimRiverResultsGold", true)
 
-	-- Быстрый проход через триггеры этапов (по ~0.16с на этап -> порции по 10-20 золота в сек)
 	for stage = 1, 10 do
 		if not Config.AutoFarmActive or not hrp.Parent or hum.Health <= 0 then break end
 		FarmStatus.Text = string.format(tr("FarmStage"), stage)
@@ -802,7 +771,6 @@ local function runResetFarmCycle()
 		end
 
 		hrp.CFrame = targetCF
-		-- Вызов серверного начисления за пройденные стены, если доступно
 		if claimRemote and claimRemote:IsA("RemoteEvent") then
 			pcall(function() claimRemote:FireServer() end)
 		end
@@ -811,13 +779,12 @@ local function runResetFarmCycle()
 		refreshGoldLabels()
 	end
 
-	-- Касание триггера воды/сундука и быстрый ресет персонажа (без долгого ожидания)
 	if Config.AutoFarmActive and hrp.Parent and hum.Health > 0 then
 		FarmStatus.Text = tr("FarmReset")
 		local theEnd = normalStages and normalStages:FindFirstChild("TheEnd")
 		local chest = theEnd and theEnd:FindFirstChild("GoldenChest")
 		if chest and chest:FindFirstChild("Trigger") then
-			hrp.CFrame = (chest.Trigger :: BasePart).CFrame
+			hrp.CFrame = chest.Trigger.CFrame
 		else
 			hrp.CFrame = CFrame.new(-55, -350, 9490)
 		end
@@ -827,7 +794,6 @@ local function runResetFarmCycle()
 			pcall(function() claimRemote:FireServer() end)
 		end
 
-		-- Ресет персонажа для мгновенной выдачи золота и перезапуска цикла
 		hum.Health = 0
 		LocalPlayer.CharacterAdded:Wait()
 		task.wait(0.4)
@@ -851,7 +817,6 @@ FarmToggleBtn.MouseButton1Click:Connect(function()
 	end
 end)
 
--- Фоновое обновление счетчика золота
 task.spawn(function()
 	while ScreenGui.Parent do
 		refreshGoldLabels()
@@ -860,7 +825,7 @@ task.spawn(function()
 end)
 
 -- ============================================================================
--- TAB 2: AUTO BUILD (.BUILD SELECTOR + ITEM LIST)
+-- TAB 2: AUTO BUILD
 -- ============================================================================
 local ControlPanel = Instance.new("Frame")
 ControlPanel.Size = UDim2.new(1, 0, 0, 142)
@@ -1000,13 +965,13 @@ local function refreshUIForSelectedBuild()
 	end
 
 	local typeCount = 0
-	for _ in pairs(buildData.Requirements) do typeCount += 1 end
+	for _ in pairs(buildData.Requirements) do typeCount = typeCount + 1 end
 
 	FileHeaderLbl.Text = tr("FileSelected") .. buildData.FileName
 	FileMetaLbl.Text = string.format(tr("MetaFormat"), buildData.Version, buildData.TotalBlocks, typeCount)
-	FileDropdownBtn.Text = buildData.FileName .. " ▾"
+	FileDropdownBtn.Text = buildData.FileName
 
-	local sortedTypes: { string } = {}
+	local sortedTypes = {}
 	for bType in pairs(buildData.Requirements) do table.insert(sortedTypes, bType) end
 	table.sort(sortedTypes, function(a, b) return buildData.Requirements[a] > buildData.Requirements[b] end)
 
@@ -1015,8 +980,7 @@ local function refreshUIForSelectedBuild()
 		local owned = getOwnedBlockCount(blockType)
 		local stillNeeded = math.max(0, totalNeeded - owned)
 		local isEnough = (stillNeeded == 0)
-
-		local meta = BlockMeta[blockType] or { Icon = "rbxassetid://6031265976", Display = blockType }
+		local meta = BlockMeta[blockType] or {Icon = "rbxassetid://6031265976", Display = blockType}
 
 		local row = Instance.new("Frame")
 		row.Size = UDim2.new(1, 0, 0, 56)
@@ -1119,7 +1083,7 @@ local function rebuildFileBrowserAndDropdown()
 		cSub.Size = UDim2.new(1, -145, 0, 26)
 		cSub.Position = UDim2.fromOffset(12, 34)
 		cSub.BackgroundTransparency = 1
-		cSub.Text = string.format("%s  •  %d blocks", bData.Version, bData.TotalBlocks)
+		cSub.Text = string.format("%s  -  %d blocks", bData.Version, bData.TotalBlocks)
 		cSub.TextColor3 = pal.SubText
 		cSub.Font = Enum.Font.Gotham
 		cSub.TextSize = 12
@@ -1185,13 +1149,11 @@ StartBuildBtn.MouseButton1Click:Connect(function()
 end)
 
 -- ============================================================================
--- LOCALIZATION & PLATFORM REFRESH FUNCTION
+-- LOCALIZATION & PLATFORM REFRESH
 -- ============================================================================
 local function applyConfigChanges()
-	-- Масштаб под PC или Mobile
 	MainScale.Scale = (Config.Platform == "Mobile") and 0.82 or 1.0
 
-	-- Локализация всех текстов
 	TabButtons["Farm"].Text = tr("TabFarm")
 	TabButtons["Build"].Text = tr("TabBuild")
 	TabButtons["Workshop"].Text = tr("TabWorkshop")
@@ -1216,9 +1178,9 @@ local function applyConfigChanges()
 end
 
 -- ============================================================================
--- TAB 4: SETTINGS & INITIAL SETUP MODAL (PC/MOBILE, RU/EN, THEME)
+-- TAB 4: SETTINGS & SETUP MODAL
 -- ============================================================================
-local function createSelectorCard(parent: Instance, labelKey: string, options: { string }, getCurrent: () -> string, onSelect: (string) -> ())
+local function createSelectorCard(parent, labelKey, options, getCurrent, onSelect)
 	local card = Instance.new("Frame")
 	card.Size = UDim2.new(1, 0, 0, 68)
 	card.Parent = parent
@@ -1252,7 +1214,7 @@ local function createSelectorCard(parent: Instance, labelKey: string, options: {
 	layout.Padding = UDim.new(0, 8)
 	layout.Parent = row
 
-	local btns: { [string]: TextButton } = {}
+	local btns = {}
 	local function refreshBtns()
 		local pal = getPalette()
 		lbl.Text = tr(labelKey)
@@ -1283,21 +1245,20 @@ local function createSelectorCard(parent: Instance, labelKey: string, options: {
 	return refreshBtns
 end
 
--- Наполняем вкладку Settings
-createSelectorCard(PageSettings, "PlatformLbl", { "PC", "Mobile" }, function() return Config.Platform end, function(v)
+createSelectorCard(PageSettings, "PlatformLbl", {"PC", "Mobile"}, function() return Config.Platform end, function(v)
 	Config.Platform = v
 	applyConfigChanges()
 end)
-createSelectorCard(PageSettings, "LangLbl", { "RU", "EN" }, function() return Config.Language end, function(v)
+createSelectorCard(PageSettings, "LangLbl", {"RU", "EN"}, function() return Config.Language end, function(v)
 	Config.Language = v
 	applyConfigChanges()
 end)
-createSelectorCard(PageSettings, "ThemeLbl", { "Monochrome", "Midnight", "Crimson" }, function() return Config.Theme end, function(v)
+createSelectorCard(PageSettings, "ThemeLbl", {"Monochrome", "Midnight", "Crimson"}, function() return Config.Theme end, function(v)
 	Config.Theme = v
 	applyConfigChanges()
 end)
 
--- Стартовое окно настройки (Setup Modal)
+-- Setup Modal
 local SetupModal = Instance.new("Frame")
 SetupModal.Size = UDim2.fromOffset(420, 320)
 SetupModal.Position = UDim2.fromScale(0.5, 0.5)
@@ -1355,15 +1316,15 @@ local function syncSetupModal()
 	if r3 then r3() end
 end
 
-r1 = createSelectorCard(SetupList, "PlatformLbl", { "PC", "Mobile" }, function() return Config.Platform end, function(v)
+r1 = createSelectorCard(SetupList, "PlatformLbl", {"PC", "Mobile"}, function() return Config.Platform end, function(v)
 	Config.Platform = v
 	syncSetupModal()
 end)
-r2 = createSelectorCard(SetupList, "LangLbl", { "RU", "EN" }, function() return Config.Language end, function(v)
+r2 = createSelectorCard(SetupList, "LangLbl", {"RU", "EN"}, function() return Config.Language end, function(v)
 	Config.Language = v
 	syncSetupModal()
 end)
-r3 = createSelectorCard(SetupList, "ThemeLbl", { "Monochrome", "Midnight", "Crimson" }, function() return Config.Theme end, function(v)
+r3 = createSelectorCard(SetupList, "ThemeLbl", {"Monochrome", "Midnight", "Crimson"}, function() return Config.Theme end, function(v)
 	Config.Theme = v
 	syncSetupModal()
 end)
@@ -1375,7 +1336,7 @@ ContinueBtn.MouseButton1Click:Connect(function()
 	applyConfigChanges()
 end)
 
--- Инициализация при старте
+-- INIT
 applyConfigChanges()
 
 UserInputService.InputBegan:Connect(function(input, gp)
