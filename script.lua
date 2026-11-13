@@ -6,6 +6,21 @@ local Players          = game:GetService("Players")
 local RunService       = game:GetService("RunService")
 local UserInputService = game:GetService("UserInputService")
 
+local genv = (typeof(getgenv) == "function" and getgenv()) or _G
+local guiPresent = Players.LocalPlayer:FindFirstChild("PlayerGui")
+    and Players.LocalPlayer.PlayerGui:FindFirstChild("MM2Collector")
+if genv.MM2CollectorRunning and guiPresent then
+    pcall(function()
+        game:GetService("StarterGui"):SetCore("SendNotification", {
+            Title = "MM2 Collector",
+            Text = "Уже запущен 💜",
+            Duration = 3,
+        })
+    end)
+    return
+end
+genv.MM2CollectorRunning = true
+
 local lp       = Players.LocalPlayer
 local char     = lp.Character or lp.CharacterAdded:Wait()
 local hrp      = char:WaitForChild("HumanoidRootPart")
@@ -21,6 +36,8 @@ local speed         = saved.speed
 local active        = false
 local noclipConn    = nil
 local currentTarget = nil
+local coinCount     = 0
+local statusLabel   = nil
 local blacklist     = {}
 local facing        = Vector3.new(0, 0, -1)
 local LYING         = CFrame.Angles(math.rad(-90), 0, 0)
@@ -64,25 +81,28 @@ local function setActive(on)
     end
 end
 
--- ─── round detection: lobby has no coins in CoinContainer ─
+-- ─── coin detection ──────────────────────────────────────
 local function getCoinRoot()
-    return workspace:FindFirstChild("CoinContainer")
-end
-
-local function inRound()
-    local root = getCoinRoot()
-    return root ~= nil and #root:GetChildren() > 0
+    return workspace:FindFirstChild("CoinContainer") or workspace
 end
 
 local function isValidCoin(obj)
     if not obj or not obj.Parent then return false end
-    if not obj:IsA("BasePart") then return false end
-    if obj.Transparency >= 1 then return false end
+    if not (obj:IsA("BasePart") or obj:IsA("Model")) then return false end
+    if obj:IsDescendantOf(char) then return false end
     return obj.Name:lower():find("coin") ~= nil
+end
+
+local function coinPos(obj)
+    if obj:IsA("BasePart") then
+        return obj.Position
+    end
+    return obj:GetPivot().Position
 end
 
 local function getNearestCoin()
     local root = getCoinRoot()
+    coinCount = 0
     if not root then return nil end
 
     local now    = os.clock()
@@ -91,7 +111,8 @@ local function getNearestCoin()
 
     for _, obj in ipairs(root:GetDescendants()) do
         if isValidCoin(obj) and (not blacklist[obj] or blacklist[obj] < now) then
-            local d = (obj.Position - origin).Magnitude
+            coinCount += 1
+            local d = (coinPos(obj) - origin).Magnitude
             if d < bestDist then
                 bestDist = d
                 best     = obj
@@ -112,7 +133,7 @@ local function stepToward(targetPart)
     end
 
     local origin = hrp.Position
-    local delta  = targetPart.Position - origin
+    local delta  = coinPos(targetPart) - origin
     local dist   = delta.Magnitude
 
     if dist <= 2 then
@@ -134,15 +155,17 @@ end
 
 -- ─── main loop ───────────────────────────────────────────
 RunService.Heartbeat:Connect(function()
-    if not collectOn or not hrp.Parent or humanoid.Health <= 0 or not inRound() then
+    if not collectOn or not hrp.Parent or humanoid.Health <= 0 then
         currentTarget = nil
         setActive(false)
         return
     end
 
-    setActive(true)
+    if statusLabel then
+        statusLabel.Text = ("Монет: %d | цель: %s"):format(coinCount, currentTarget and currentTarget.Name or "нет")
+    end
 
-    if currentTarget and (not currentTarget.Parent or currentTarget.Transparency >= 1) then
+    if currentTarget and not currentTarget.Parent then
         currentTarget = nil
     end
 
@@ -150,15 +173,18 @@ RunService.Heartbeat:Connect(function()
         currentTarget = getNearestCoin()
     end
 
-    if currentTarget then
-        if stepToward(currentTarget) then
-            blacklist[currentTarget] = os.clock() + 2
-            currentTarget = nil
-            layAt(hrp.Position)
-        end
-    else
-        hrp.AssemblyLinearVelocity  = Vector3.zero
-        hrp.AssemblyAngularVelocity = Vector3.zero
+    if not currentTarget then
+        setActive(false)
+        return
+    end
+
+    setActive(true)
+    hrp.AssemblyLinearVelocity  = Vector3.zero
+    hrp.AssemblyAngularVelocity = Vector3.zero
+
+    if stepToward(currentTarget) then
+        blacklist[currentTarget] = os.clock() + 6
+        currentTarget = nil
         layAt(hrp.Position)
     end
 end)
@@ -294,6 +320,16 @@ warnLabel.TextSize               = 11
 warnLabel.TextXAlignment         = Enum.TextXAlignment.Center
 warnLabel.Visible                = false
 warnLabel.Parent                 = frame
+
+statusLabel = Instance.new("TextLabel")
+statusLabel.Size                   = UDim2.new(1, -24, 0, 16)
+statusLabel.Position               = UDim2.new(0, 12, 0, 170)
+statusLabel.BackgroundTransparency = 1
+statusLabel.TextColor3             = Color3.fromRGB(170, 140, 210)
+statusLabel.Font                   = Enum.Font.Gotham
+statusLabel.TextSize               = 11
+statusLabel.Text                   = "Монет: 0 | цель: нет"
+statusLabel.Parent                 = frame
 
 -- ─── GUI helpers ─────────────────────────────────────────
 local function refreshButton()
