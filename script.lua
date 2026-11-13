@@ -1,25 +1,24 @@
 -- MM2 Coin Collector | Roblox | Murder Mystery 2
--- Auto-collects coins with noclip flight, dark-purple GUI
--- From scratch: no frameworks, raw Roblox API only
+-- Minimize-to-square GUI, drag on both square and window
+-- From scratch: raw Roblox API only
 
-local Players       = game:GetService("Players")
-local RunService    = game:GetService("RunService")
-local TweenService  = game:GetService("TweenService")
+local Players          = game:GetService("Players")
+local RunService       = game:GetService("RunService")
 local UserInputService = game:GetService("UserInputService")
 
-local lp           = Players.LocalPlayer
-local char         = lp.Character or lp.CharacterAdded:Wait()
-local hrp          = char:WaitForChild("HumanoidRootPart")
-local humanoid     = char:WaitForChild("Humanoid")
+local lp       = Players.LocalPlayer
+local char     = lp.Character or lp.CharacterAdded:Wait()
+local hrp      = char:WaitForChild("HumanoidRootPart")
+local humanoid = char:WaitForChild("Humanoid")
 
 -- ─── state ───────────────────────────────────────────────
-local collecting   = false
-local speed        = 10        -- studs per heartbeat step
-local noclipConn   = nil
-local collectLoop  = nil
+local collecting    = false
+local speed         = 10
+local noclipConn    = nil
+local collectLoop   = nil
 local currentTarget = nil
 
--- ─── noclip (bypass collision while flying) ──────────────
+-- ─── noclip ──────────────────────────────────────────────
 local function enableNoclip()
     noclipConn = RunService.Stepped:Connect(function()
         for _, part in ipairs(char:GetDescendants()) do
@@ -35,7 +34,6 @@ local function disableNoclip()
         noclipConn:Disconnect()
         noclipConn = nil
     end
-    -- restore normal collision on character
     for _, part in ipairs(char:GetDescendants()) do
         if part:IsA("BasePart") then
             part.CanCollide = true
@@ -44,21 +42,15 @@ local function disableNoclip()
 end
 
 -- ─── coin scanner ────────────────────────────────────────
--- MM2 coins live under workspace, their Name contains "Coin"
--- or they have a tag / BillboardGui child — we check both
 local function isValidCoin(obj)
     if not obj or not obj.Parent then return false end
-    if not obj:IsA("BasePart") and not obj:IsA("MeshPart") and not obj:IsA("Part") then
-        return false
-    end
-    local n = obj.Name:lower()
-    return n:find("coin") ~= nil
+    if not obj:IsA("BasePart") then return false end
+    return obj.Name:lower():find("coin") ~= nil
 end
 
 local function getNearestCoin()
-    local best     = nil
-    local bestDist = math.huge
-    local origin   = hrp.Position
+    local best, bestDist = nil, math.huge
+    local origin = hrp.Position
 
     for _, obj in ipairs(workspace:GetDescendants()) do
         if isValidCoin(obj) then
@@ -72,65 +64,56 @@ local function getNearestCoin()
     return best, bestDist
 end
 
--- ─── movement toward a part ──────────────────────────────
--- steps toward target each Heartbeat tick at `speed` studs/step
+-- ─── movement ────────────────────────────────────────────
 local function stepToward(targetPart)
-    -- returns true when arrived OR target gone
     if not targetPart or not targetPart.Parent then
-        return true   -- target vanished → caller handles it
+        return true
     end
 
     local origin = hrp.Position
     local goal   = targetPart.Position
-    local delta  = (goal - origin)
+    local delta  = goal - origin
     local dist   = delta.Magnitude
 
     if dist <= 3 then
-        return true   -- close enough → collected
+        return true
     end
 
-    local direction = delta.Unit
-    local step      = math.min(speed, dist)
-    local newPos    = origin + direction * step
+    local step   = math.min(speed, dist)
+    local newPos = origin + delta.Unit * step
 
     hrp.CFrame = CFrame.new(newPos, goal)
     return false
 end
 
--- ─── main collect loop ───────────────────────────────────
+-- ─── collect loop ────────────────────────────────────────
 local function startCollecting()
     if collecting then return end
     collecting = true
     enableNoclip()
-
-    humanoid.PlatformStand = true  -- freeze default locomotion
+    humanoid.PlatformStand = true
 
     collectLoop = RunService.Heartbeat:Connect(function()
-        -- if we have a target, keep moving toward it
         if currentTarget then
             if not currentTarget.Parent then
-                -- coin disappeared mid-flight → idle, search again
                 currentTarget = nil
                 return
             end
-            local arrived = stepToward(currentTarget)
-            if arrived then
-                currentTarget = nil  -- pick next one next frame
+            if stepToward(currentTarget) then
+                currentTarget = nil
             end
         else
-            -- scan for nearest coin
-            local coin, dist = getNearestCoin()
+            local coin = getNearestCoin()
             if coin then
                 currentTarget = coin
             end
-            -- if no coin found we just idle until one spawns
         end
     end)
 end
 
 local function stopCollecting()
     if not collecting then return end
-    collecting = false
+    collecting    = false
     currentTarget = nil
 
     if collectLoop then
@@ -142,158 +125,228 @@ local function stopCollecting()
     humanoid.PlatformStand = false
 end
 
--- ─── GUI ─────────────────────────────────────────────────
+-- ─── drag helper (mouse + touch) ─────────────────────────
+-- handle = what you grab, target = what moves, onTap = fires if no real drag happened
+local function makeDraggable(handle, target, onTap)
+    local dragging, dragStart, startPos, moved = false, nil, nil, false
+
+    handle.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1
+           or input.UserInputType == Enum.UserInputType.Touch then
+            dragging  = true
+            dragStart = input.Position
+            startPos  = target.Position
+            moved     = false
+        end
+    end)
+
+    UserInputService.InputChanged:Connect(function(input)
+        if not dragging then return end
+        if input.UserInputType ~= Enum.UserInputType.MouseMovement
+           and input.UserInputType ~= Enum.UserInputType.Touch then return end
+
+        local delta = input.Position - dragStart
+        if delta.Magnitude > 6 then
+            moved = true
+        end
+        target.Position = UDim2.new(
+            startPos.X.Scale, startPos.X.Offset + delta.X,
+            startPos.Y.Scale, startPos.Y.Offset + delta.Y
+        )
+    end)
+
+    UserInputService.InputEnded:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1
+           or input.UserInputType == Enum.UserInputType.Touch then
+            if dragging and not moved and onTap then
+                onTap()
+            end
+            dragging = false
+        end
+    end)
+end
+
+-- ─── ScreenGui ───────────────────────────────────────────
 local screenGui = Instance.new("ScreenGui")
-screenGui.Name            = "MM2Collector"
-screenGui.ResetOnSpawn    = false
-screenGui.ZIndexBehavior  = Enum.ZIndexBehavior.Sibling
-screenGui.Parent          = lp:WaitForChild("PlayerGui")
+screenGui.Name           = "MM2Collector"
+screenGui.ResetOnSpawn   = false
+screenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+screenGui.Parent         = lp:WaitForChild("PlayerGui")
 
--- main frame — translucent dark purple
+local function addCorner(parent, radius)
+    local c = Instance.new("UICorner")
+    c.CornerRadius = UDim.new(0, radius)
+    c.Parent = parent
+    return c
+end
+
+-- ─── minimized square (black, purple stroke, rounded) ────
+local square = Instance.new("TextButton")
+square.Name                  = "Square"
+square.Size                  = UDim2.new(0, 52, 0, 52)
+square.Position              = UDim2.new(0, 20, 0, 120)
+square.BackgroundColor3      = Color3.fromRGB(0, 0, 0)
+square.BackgroundTransparency = 0.1
+square.Text                  = "💜"
+square.TextSize              = 22
+square.AutoButtonColor       = false
+square.BorderSizePixel       = 0
+square.Parent                = screenGui
+
+addCorner(square, 12)
+
+local squareStroke = Instance.new("UIStroke")
+squareStroke.Color        = Color3.fromRGB(160, 80, 220)
+squareStroke.Thickness    = 2
+squareStroke.Parent       = square
+
+-- ─── main window ────────────────────────────────────────
 local frame = Instance.new("Frame")
-frame.Size            = UDim2.new(0, 240, 0, 190)
-frame.Position        = UDim2.new(0.5, -120, 0.5, -95)
-frame.BackgroundColor3 = Color3.fromRGB(30, 10, 50)
+frame.Name                   = "Window"
+frame.Size                   = UDim2.new(0, 240, 0, 190)
+frame.Position               = UDim2.new(0.5, -120, 0.5, -95)
+frame.BackgroundColor3       = Color3.fromRGB(30, 10, 50)
 frame.BackgroundTransparency = 0.25
-frame.BorderSizePixel = 0
-frame.Active          = true
-frame.Draggable       = true
-frame.Parent          = screenGui
+frame.BorderSizePixel        = 0
+frame.Visible                = false
+frame.Parent                 = screenGui
 
--- rounded corners
-local corner = Instance.new("UICorner")
-corner.CornerRadius = UDim.new(0, 10)
-corner.Parent = frame
+addCorner(frame, 10)
 
--- title bar
+-- header bar: drag handle + minimize line
+local header = Instance.new("Frame")
+header.Name                  = "Header"
+header.Size                  = UDim2.new(1, 0, 0, 36)
+header.BackgroundTransparency = 1
+header.Parent                = frame
+
 local title = Instance.new("TextLabel")
-title.Size            = UDim2.new(1, 0, 0, 36)
-title.Position        = UDim2.new(0, 0, 0, 0)
+title.Size                  = UDim2.new(1, -44, 1, 0)
+title.Position              = UDim2.new(0, 8, 0, 0)
 title.BackgroundTransparency = 1
-title.Text            = "💜 MM2 Coin Collector"
-title.TextColor3      = Color3.fromRGB(220, 180, 255)
-title.Font            = Enum.Font.GothamBold
-title.TextSize        = 15
-title.Parent          = frame
+title.Text                  = "💜 MM2 Coin Collector"
+title.TextColor3            = Color3.fromRGB(220, 180, 255)
+title.Font                  = Enum.Font.GothamBold
+title.TextSize              = 15
+title.TextXAlignment        = Enum.TextXAlignment.Left
+title.Parent                = header
 
--- start/stop button — dark purple
+-- minimize: the "—" line
+local minBtn = Instance.new("TextButton")
+minBtn.Size                  = UDim2.new(0, 32, 0, 28)
+minBtn.Position              = UDim2.new(1, -38, 0, 4)
+minBtn.BackgroundTransparency = 1
+minBtn.Text                  = "—"
+minBtn.TextColor3            = Color3.fromRGB(220, 180, 255)
+minBtn.Font                  = Enum.Font.GothamBold
+minBtn.TextSize              = 18
+minBtn.Parent                = header
+
+-- start/stop
 local btn = Instance.new("TextButton")
-btn.Size              = UDim2.new(1, -24, 0, 42)
-btn.Position          = UDim2.new(0, 12, 0, 44)
-btn.BackgroundColor3  = Color3.fromRGB(70, 20, 110)
+btn.Size                  = UDim2.new(1, -24, 0, 42)
+btn.Position              = UDim2.new(0, 12, 0, 44)
+btn.BackgroundColor3      = Color3.fromRGB(70, 20, 110)
 btn.BackgroundTransparency = 0.1
-btn.Text              = "▶  Начать"
-btn.TextColor3        = Color3.fromRGB(230, 200, 255)
-btn.Font              = Enum.Font.GothamBold
-btn.TextSize          = 16
-btn.BorderSizePixel   = 0
-btn.Parent            = frame
+btn.Text                  = "▶  Начать"
+btn.TextColor3            = Color3.fromRGB(230, 200, 255)
+btn.Font                  = Enum.Font.GothamBold
+btn.TextSize              = 16
+btn.BorderSizePixel       = 0
+btn.Parent                = frame
 
-local btnCorner = Instance.new("UICorner")
-btnCorner.CornerRadius = UDim.new(0, 8)
-btnCorner.Parent = btn
+addCorner(btn, 8)
 
 -- speed label
 local speedLabel = Instance.new("TextLabel")
-speedLabel.Size              = UDim2.new(1, -24, 0, 22)
-speedLabel.Position          = UDim2.new(0, 12, 0, 100)
+speedLabel.Size                  = UDim2.new(1, -24, 0, 22)
+speedLabel.Position              = UDim2.new(0, 12, 0, 100)
 speedLabel.BackgroundTransparency = 1
-speedLabel.Text              = "⚡ Скорость: " .. speed
-speedLabel.TextColor3        = Color3.fromRGB(200, 170, 240)
-speedLabel.Font              = Enum.Font.Gotham
-speedLabel.TextSize          = 13
-speedLabel.TextXAlignment    = Enum.TextXAlignment.Left
-speedLabel.Parent            = frame
+speedLabel.Text                  = "⚡ Скорость: " .. speed
+speedLabel.TextColor3            = Color3.fromRGB(200, 170, 240)
+speedLabel.Font                  = Enum.Font.Gotham
+speedLabel.TextSize              = 13
+speedLabel.TextXAlignment        = Enum.TextXAlignment.Left
+speedLabel.Parent                = frame
 
--- slider track
+-- slider
 local sliderTrack = Instance.new("Frame")
-sliderTrack.Size              = UDim2.new(1, -24, 0, 8)
-sliderTrack.Position          = UDim2.new(0, 12, 0, 128)
-sliderTrack.BackgroundColor3  = Color3.fromRGB(80, 40, 120)
+sliderTrack.Size                  = UDim2.new(1, -24, 0, 8)
+sliderTrack.Position              = UDim2.new(0, 12, 0, 128)
+sliderTrack.BackgroundColor3      = Color3.fromRGB(80, 40, 120)
 sliderTrack.BackgroundTransparency = 0.3
-sliderTrack.BorderSizePixel   = 0
-sliderTrack.Parent            = frame
+sliderTrack.BorderSizePixel       = 0
+sliderTrack.Parent                = frame
 
-local trackCorner = Instance.new("UICorner")
-trackCorner.CornerRadius = UDim.new(1, 0)
-trackCorner.Parent = sliderTrack
+addCorner(sliderTrack, 999)
 
--- slider fill
 local sliderFill = Instance.new("Frame")
-sliderFill.Size              = UDim2.new(speed / 40, 0, 1, 0)  -- max ~40
-sliderFill.BackgroundColor3  = Color3.fromRGB(160, 80, 220)
-sliderFill.BackgroundTransparency = 0
-sliderFill.BorderSizePixel   = 0
-sliderFill.Parent            = sliderTrack
+sliderFill.Size                  = UDim2.new(speed / 40, 0, 1, 0)
+sliderFill.BackgroundColor3      = Color3.fromRGB(160, 80, 220)
+sliderFill.BorderSizePixel       = 0
+sliderFill.Parent                = sliderTrack
 
-local fillCorner = Instance.new("UICorner")
-fillCorner.CornerRadius = UDim.new(1, 0)
-fillCorner.Parent = sliderFill
+addCorner(sliderFill, 999)
 
--- slider knob
 local knob = Instance.new("TextButton")
-knob.Size              = UDim2.new(0, 18, 0, 18)
-knob.AnchorPoint       = Vector2.new(0.5, 0.5)
-knob.Position          = UDim2.new(speed / 40, 0, 0.5, 0)
-knob.BackgroundColor3  = Color3.fromRGB(200, 130, 255)
-knob.Text              = ""
-knob.BorderSizePixel   = 0
-knob.Parent            = sliderTrack
+knob.Size                  = UDim2.new(0, 18, 0, 18)
+knob.AnchorPoint           = Vector2.new(0.5, 0.5)
+knob.Position              = UDim2.new(speed / 40, 0, 0.5, 0)
+knob.BackgroundColor3      = Color3.fromRGB(200, 130, 255)
+knob.Text                  = ""
+knob.BorderSizePixel       = 0
+knob.Parent                = sliderTrack
 
-local knobCorner = Instance.new("UICorner")
-knobCorner.CornerRadius = UDim.new(1, 0)
-knobCorner.Parent = knob
+addCorner(knob, 999)
 
--- warning label (hidden by default)
+-- warning
 local warnLabel = Instance.new("TextLabel")
-warnLabel.Size              = UDim2.new(1, -24, 0, 22)
-warnLabel.Position          = UDim2.new(0, 12, 0, 148)
+warnLabel.Size                  = UDim2.new(1, -24, 0, 22)
+warnLabel.Position              = UDim2.new(0, 12, 0, 148)
 warnLabel.BackgroundTransparency = 1
-warnLabel.Text              = "⚠️ Высокая скорость — возможен кик!"
-warnLabel.TextColor3        = Color3.fromRGB(255, 160, 80)
-warnLabel.Font              = Enum.Font.Gotham
-warnLabel.TextSize          = 11
-warnLabel.TextXAlignment    = Enum.TextXAlignment.Center
-warnLabel.Visible           = false
-warnLabel.Parent            = frame
+warnLabel.Text                  = "⚠️ Высокая скорость — возможен кик!"
+warnLabel.TextColor3            = Color3.fromRGB(255, 160, 80)
+warnLabel.Font                  = Enum.Font.Gotham
+warnLabel.TextSize              = 11
+warnLabel.TextXAlignment        = Enum.TextXAlignment.Center
+warnLabel.Visible               = false
+warnLabel.Parent                = frame
 
--- ─── slider drag logic ───────────────────────────────────
-local dragging = false
+-- ─── slider drag ─────────────────────────────────────────
+local sliderDragging = false
 
-knob.MouseButton1Down:Connect(function()
-    dragging = true
+knob.InputBegan:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1
+       or input.UserInputType == Enum.UserInputType.Touch then
+        sliderDragging = true
+    end
 end)
 
 UserInputService.InputEnded:Connect(function(input)
     if input.UserInputType == Enum.UserInputType.MouseButton1
        or input.UserInputType == Enum.UserInputType.Touch then
-        dragging = false
+        sliderDragging = false
     end
 end)
 
 UserInputService.InputChanged:Connect(function(input)
-    if not dragging then return end
+    if not sliderDragging then return end
     if input.UserInputType ~= Enum.UserInputType.MouseMovement
        and input.UserInputType ~= Enum.UserInputType.Touch then return end
 
-    local trackAbsPos  = sliderTrack.AbsolutePosition.X
-    local trackAbsSize = sliderTrack.AbsoluteSize.X
-    local mouseX       = input.Position.X
+    local trackX = sliderTrack.AbsolutePosition.X
+    local trackW = sliderTrack.AbsoluteSize.X
+    local ratio  = math.clamp((input.Position.X - trackX) / trackW, 0, 1)
 
-    local ratio = math.clamp((mouseX - trackAbsPos) / trackAbsSize, 0, 1)
-    speed = math.floor(ratio * 40)
-    if speed < 1 then speed = 1 end
+    speed = math.max(1, math.floor(ratio * 40))
 
-    -- update visuals
-    sliderFill.Size     = UDim2.new(ratio, 0, 1, 0)
-    knob.Position       = UDim2.new(ratio, 0, 0.5, 0)
-    speedLabel.Text     = "⚡ Скорость: " .. speed
-
-    -- warn if > 20
-    warnLabel.Visible   = speed > 20
+    sliderFill.Size   = UDim2.new(ratio, 0, 1, 0)
+    knob.Position     = UDim2.new(ratio, 0, 0.5, 0)
+    speedLabel.Text   = "⚡ Скорость: " .. speed
+    warnLabel.Visible = speed > 20
 end)
 
--- ─── start/stop button ───────────────────────────────────
+-- ─── start/stop ──────────────────────────────────────────
 btn.MouseButton1Click:Connect(function()
     if collecting then
         stopCollecting()
@@ -306,13 +359,39 @@ btn.MouseButton1Click:Connect(function()
     end
 end)
 
--- ─── respawn handling ─────────────────────────────────────
--- if char respawns, re-grab references
+-- ─── minimize / open ─────────────────────────────────────
+local function showWindow()
+    frame.Position = UDim2.new(
+        0, square.AbsolutePosition.X + 60,
+        0, square.AbsolutePosition.Y
+    )
+    frame.Visible  = true
+    square.Visible = false
+end
+
+local function minimizeWindow()
+    square.Position = UDim2.new(
+        0, frame.AbsolutePosition.X,
+        0, frame.AbsolutePosition.Y
+    )
+    frame.Visible  = false
+    square.Visible = true
+end
+
+minBtn.MouseButton1Click:Connect(minimizeWindow)
+
+-- square: drag to move, tap to open
+makeDraggable(square, square, showWindow)
+
+-- window: drag by header
+makeDraggable(header, frame)
+
+-- ─── respawn ─────────────────────────────────────────────
 lp.CharacterAdded:Connect(function(newChar)
     stopCollecting()
-    char      = newChar
-    hrp       = newChar:WaitForChild("HumanoidRootPart")
-    humanoid  = newChar:WaitForChild("Humanoid")
-    btn.Text              = "▶  Начать"
-    btn.BackgroundColor3  = Color3.fromRGB(70, 20, 110)
+    char     = newChar
+    hrp      = newChar:WaitForChild("HumanoidRootPart")
+    humanoid = newChar:WaitForChild("Humanoid")
+    btn.Text             = "▶  Начать"
+    btn.BackgroundColor3 = Color3.fromRGB(70, 20, 110)
 end)
