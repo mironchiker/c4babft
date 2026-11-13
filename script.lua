@@ -127,7 +127,9 @@ local function layAt(pos)
     hrp.CFrame = CFrame.lookAt(pos, pos + facing) * LYING
 end
 
-local function stepToward(targetPart)
+local SPEED_SCALE = 2.5
+
+local function stepToward(targetPart, dt)
     if not targetPart or not targetPart.Parent then
         return true
     end
@@ -145,7 +147,7 @@ local function stepToward(targetPart)
         facing = flat.Unit
     end
 
-    local newPos = origin + delta.Unit * math.min(speed, dist)
+    local newPos = origin + delta.Unit * math.min(speed * SPEED_SCALE * dt, dist)
 
     hrp.AssemblyLinearVelocity  = Vector3.zero
     hrp.AssemblyAngularVelocity = Vector3.zero
@@ -154,7 +156,7 @@ local function stepToward(targetPart)
 end
 
 -- ─── main loop ───────────────────────────────────────────
-RunService.Heartbeat:Connect(function()
+RunService.Heartbeat:Connect(function(dt)
     if not collectOn or not hrp.Parent or humanoid.Health <= 0 then
         currentTarget = nil
         setActive(false)
@@ -182,7 +184,7 @@ RunService.Heartbeat:Connect(function()
     hrp.AssemblyLinearVelocity  = Vector3.zero
     hrp.AssemblyAngularVelocity = Vector3.zero
 
-    if stepToward(currentTarget) then
+    if stepToward(currentTarget, dt) then
         blacklist[currentTarget] = os.clock() + 6
         currentTarget = nil
         layAt(hrp.Position)
