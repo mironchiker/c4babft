@@ -258,28 +258,36 @@ local function hookHumanoidEvents(h)
 end
 hookHumanoidEvents(humanoid)
 
--- returns finished, reached:
---   finished = true  -> stop chasing this target, pick a new one
---   reached  = true  -> we actually arrived at a real coin (count it);
---                       false means the target vanished/went stale
---                       underneath us — not a genuine pickup
+-- Flying exactly at the coin's own Y was clipping the lying-flat hitbox
+-- below a lot of coins' touch zones (they sit a bit proud of the floor),
+-- which is why so many got skipped entirely. Approach a point hovering
+-- above the coin instead — this is purely a flight-path offset, it does
+-- not change what counts as "collected" (that's now Touched-based, below).
+local FLIGHT_HOVER = 3 -- studs above the coin's raw position
+
+-- finished = true -> stop chasing this target, pick a new one.
+-- Actual coin pickups are counted separately via hrp.Touched (see below),
+-- not by "we flew close enough" — distance alone was crediting coins
+-- that were never really touched (phantom counts that tripped the cap
+-- early) and missing real ones we flew just past.
 local function stepToward(targetPart, dt)
     if not targetPart or not targetPart.Parent then
-        return true, false
+        return true
     end
 
-    local origin = hrp.Position
-    local delta  = coinPos(targetPart) - origin
-    local dist   = delta.Magnitude
+    local origin   = hrp.Position
+    local hoverPos = coinPos(targetPart) + Vector3.new(0, FLIGHT_HOVER, 0)
+    local delta    = hoverPos - origin
+    local dist     = delta.Magnitude
 
     if dist > MAX_CHASE_DIST then
         -- target teleported/got recycled far away mid-chase — drop it
         -- instead of following it off the map
-        return true, false
+        return true
     end
 
     if dist <= 2 then
-        return true, true
+        return true
     end
 
     local flat = Vector3.new(delta.X, 0, delta.Z)
@@ -295,8 +303,53 @@ local function stepToward(targetPart, dt)
     hrp.AssemblyLinearVelocity  = Vector3.zero
     hrp.AssemblyAngularVelocity = Vector3.zero
     layAt(newPos)
-    return false, false
+    return false
 end
+
+-- ─── real pickup detection (physical touch, not guessed distance) ────
+-- CanTouch stays true even though noclip sets CanCollide = false, so
+-- Touched events still fire for genuine overlaps — this is the only
+-- thing that increments totalCollected now.
+local function resolveCoin(part)
+    local obj = part
+    for _ = 1, 4 do
+        if not obj or obj == workspace then return nil end
+        if isValidCoin(obj) then return obj end
+        obj = obj.Parent
+    end
+    return nil
+end
+
+local hrpTouchedConn = nil
+
+local function onCycleComplete()
+    -- soft reset: the script keeps running and collectOn stays true —
+    -- only the counter and per-coin cooldowns clear so the next 50 can
+    -- start fresh, nothing gets switched off
+    totalCollected = 0
+    blacklist      = {}
+    notify(("Цикл: %d монет собрано, продолжаю 💜"):format(COLLECT_CAP))
+end
+
+local function hookTouchEvents(part)
+    if hrpTouchedConn then
+        hrpTouchedConn:Disconnect()
+    end
+    hrpTouchedConn = part.Touched:Connect(function(other)
+        local obj = resolveCoin(other)
+        if not obj then return end
+
+        local now = os.clock()
+        if isBlacklisted(obj, now) then return end
+        blacklist[obj] = now + 6
+
+        totalCollected += 1
+        if totalCollected >= COLLECT_CAP then
+            onCycleComplete()
+        end
+    end)
+end
+hookTouchEvents(hrp)
 
 -- ─── main loop ───────────────────────────────────────────
 RunService.Heartbeat:Connect(function(dt)
@@ -338,24 +391,13 @@ RunService.Heartbeat:Connect(function(dt)
     hrp.AssemblyLinearVelocity  = Vector3.zero
     hrp.AssemblyAngularVelocity = Vector3.zero
 
-    local finished, reached = stepToward(currentTarget, dt)
-    if finished then
-        blacklist[currentTarget] = os.clock() + 6
+    if stepToward(currentTarget, dt) then
+        -- short cooldown so we don't immediately re-target the same coin
+        -- if we flew past without actually touching it — it'll come back
+        -- up as a candidate a few seconds later if it's still uncollected
+        blacklist[currentTarget] = os.clock() + 2
         currentTarget = nil
         layAt(hrp.Position)
-
-        if reached then
-            totalCollected += 1
-            if totalCollected >= COLLECT_CAP then
-                totalCollected = 0
-                collectOn      = false
-                saved.on       = false
-                scanTimer      = 0
-                refreshButton()
-                setActive(false)
-                notify(("Собрано %d монет — выключился 💜"):format(COLLECT_CAP))
-            end
-        end
     end
 end)
 
@@ -648,6 +690,7 @@ lp.CharacterAdded:Connect(function(newChar)
 
     disableNoclip()
     hookHumanoidEvents(humanoid)
+    hookTouchEvents(hrp)
 
     noclipParts   = {}
     active        = false
