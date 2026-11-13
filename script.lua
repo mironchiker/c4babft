@@ -28,7 +28,7 @@ local humanoid = char:WaitForChild("Humanoid")
 
 -- ─── persistent store (survives respawn, and re-run if getgenv exists) ───
 local store = (typeof(getgenv) == "function" and getgenv()) or _G
-store.MM2Collector = store.MM2Collector or { on = false, speed = 10 }
+store.MM2Collector = store.MM2Collector or { on = false, speed = 1 }
 local saved = store.MM2Collector
 
 local collectOn     = saved.on
@@ -90,7 +90,7 @@ local function isValidCoin(obj)
     if not obj or not obj.Parent then return false end
     if not (obj:IsA("BasePart") or obj:IsA("Model")) then return false end
     if obj:IsDescendantOf(char) then return false end
-    return obj.Name:lower():find("coin") ~= nil
+    return obj.Name:lower() == "coin_server"
 end
 
 local function coinPos(obj)
@@ -127,7 +127,15 @@ local function layAt(pos)
     hrp.CFrame = CFrame.lookAt(pos, pos + facing) * LYING
 end
 
-local SPEED_SCALE = 2.5
+local function isAlive()
+    return lp.Character == char
+        and char.Parent ~= nil
+        and hrp.Parent ~= nil
+        and humanoid.Health > 0
+end
+
+local SPEED_SCALE = 0.1
+local SPEED_MIN, SPEED_MAX = 0.1, 40
 
 local function stepToward(targetPart, dt)
     if not targetPart or not targetPart.Parent then
@@ -157,7 +165,7 @@ end
 
 -- ─── main loop ───────────────────────────────────────────
 RunService.Heartbeat:Connect(function(dt)
-    if not collectOn or not hrp.Parent or humanoid.Health <= 0 then
+    if not collectOn or not isAlive() then
         currentTarget = nil
         setActive(false)
         return
@@ -344,10 +352,18 @@ local function refreshButton()
     end
 end
 
+local function speedToRatio(s)
+    return math.sqrt((s - SPEED_MIN) / (SPEED_MAX - SPEED_MIN))
+end
+
+local function ratioToSpeed(r)
+    return SPEED_MIN + (SPEED_MAX - SPEED_MIN) * r * r
+end
+
 local function showSpeed(ratio)
     sliderFill.Size   = UDim2.new(ratio, 0, 1, 0)
     knob.Position     = UDim2.new(ratio, 0, 0.5, 0)
-    speedLabel.Text   = "⚡ Скорость: " .. speed
+    speedLabel.Text   = ("⚡ Скорость: %.1f"):format(speed)
     warnLabel.Visible = speed > 20
 end
 
@@ -356,9 +372,9 @@ local function setSpeedFromX(x)
     local trackW = sliderTrack.AbsoluteSize.X
     local ratio  = math.clamp((x - trackX) / trackW, 0, 1)
 
-    speed       = math.max(1, math.floor(ratio * 40 + 0.5))
+    speed       = math.max(SPEED_MIN, math.floor(ratioToSpeed(ratio) * 10 + 0.5) / 10)
     saved.speed = speed
-    showSpeed(speed / 40)
+    showSpeed(speedToRatio(speed))
 end
 
 local function isPress(input)
@@ -460,7 +476,7 @@ makeDraggable(square, square, showWindow)
 makeDraggable(header, frame)
 
 -- ─── init GUI from saved state ───────────────────────────
-showSpeed(speed / 40)
+showSpeed(speedToRatio(speed))
 refreshButton()
 
 -- ─── respawn: keep on/off, re-grab character refs ────────
