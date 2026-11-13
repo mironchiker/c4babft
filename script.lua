@@ -52,6 +52,12 @@ local currentTarget = nil
 local coinCount     = 0
 local statusLabel   = nil
 local blacklist     = {}
+
+-- forward declarations: these are built further down (GUI section) but
+-- the Heartbeat loop above needs to call them when the 50-coin cap hits —
+-- without this, Lua would close over a not-yet-existing local and the
+-- call would silently hit a nil global instead of the real function
+local btn, refreshButton
 local facing        = Vector3.new(0, 0, -1)
 local LYING         = CFrame.Angles(math.rad(-90), 0, 0)
 
@@ -59,6 +65,24 @@ local LYING         = CFrame.Angles(math.rad(-90), 0, 0)
 -- if we ever end up somewhere broken (under the map, stuck in geometry)
 local lastSafeCFrame = hrp.CFrame
 local UNDER_MAP_DROP = 40 -- studs below lastSafeCFrame.Y considered "fell through"
+
+-- ─── collection cap + death handling ──────────────────────
+local COLLECT_CAP     = 50
+local totalCollected  = 0
+local MAX_CHASE_DIST  = 400 -- studs; farther than this = treat as a stale/pooled
+                             -- coin object (parked off-map after pickup, not a
+                             -- real target) instead of chasing it across the map
+local humanoidDiedConn = nil
+
+local function notify(text)
+    pcall(function()
+        game:GetService("StarterGui"):SetCore("SendNotification", {
+            Title = "MM2 Collector",
+            Text = text,
+            Duration = 4,
+        })
+    end)
+end
 
 -- ─── noclip (cheap: tag parts once, no per-tick GetDescendants scan) ──
 local function trackPart(part)
@@ -166,6 +190,11 @@ local function isValidCoin(obj)
     return obj.Name:lower() == "coin_server"
 end
 
+local function isBlacklisted(obj, now)
+    local until_ = blacklist[obj]
+    return until_ and until_ > now
+end
+
 local function coinPos(obj)
     if obj:IsA("BasePart") then
         return obj.Position
@@ -183,12 +212,18 @@ local function scanCoins()
     local best, bestDist = nil, math.huge
 
     for _, obj in ipairs(root:GetDescendants()) do
-        if isValidCoin(obj) and (not blacklist[obj] or blacklist[obj] < now) then
-            coinCount += 1
+        if isValidCoin(obj) and not isBlacklisted(obj, now) then
             local d = (coinPos(obj) - origin).Magnitude
-            if d < bestDist then
-                bestDist = d
-                best     = obj
+            -- a "coin" sitting absurdly far away is almost always a pooled/
+            -- parked part the game recycles rather than destroys (what used
+            -- to make us fly way off across the map chasing nothing) — skip
+            -- it, but keep it out of the visible coinCount too
+            if d <= MAX_CHASE_DIST then
+                coinCount += 1
+                if d < bestDist then
+                    bestDist = d
+                    best     = obj
+                end
             end
         end
     end
@@ -207,17 +242,44 @@ local function isAlive()
         and humanoid.Health > 0
 end
 
+-- Health dropping to 0 is checked every Heartbeat anyway, but MM2's kill
+-- (knife, falling into water, round-end) doesn't always zero Health the
+-- same frame — Died is the one event guaranteed to fire exactly on death,
+-- so we cut flight instantly instead of riding out one more laggy frame
+-- of "still flying across the map after I'm already dead"
+local function hookHumanoidEvents(h)
+    if humanoidDiedConn then
+        humanoidDiedConn:Disconnect()
+    end
+    humanoidDiedConn = h.Died:Connect(function()
+        currentTarget = nil
+        setActive(false)
+    end)
+end
+hookHumanoidEvents(humanoid)
+
+-- returns finished, reached:
+--   finished = true  -> stop chasing this target, pick a new one
+--   reached  = true  -> we actually arrived at a real coin (count it);
+--                       false means the target vanished/went stale
+--                       underneath us — not a genuine pickup
 local function stepToward(targetPart, dt)
     if not targetPart or not targetPart.Parent then
-        return true
+        return true, false
     end
 
     local origin = hrp.Position
     local delta  = coinPos(targetPart) - origin
     local dist   = delta.Magnitude
 
+    if dist > MAX_CHASE_DIST then
+        -- target teleported/got recycled far away mid-chase — drop it
+        -- instead of following it off the map
+        return true, false
+    end
+
     if dist <= 2 then
-        return true
+        return true, true
     end
 
     local flat = Vector3.new(delta.X, 0, delta.Z)
@@ -233,7 +295,7 @@ local function stepToward(targetPart, dt)
     hrp.AssemblyLinearVelocity  = Vector3.zero
     hrp.AssemblyAngularVelocity = Vector3.zero
     layAt(newPos)
-    return false
+    return false, false
 end
 
 -- ─── main loop ───────────────────────────────────────────
@@ -251,8 +313,8 @@ RunService.Heartbeat:Connect(function(dt)
     end
 
     if statusLabel then
-        statusLabel.Text = ("Монет: %d | цель: %s | ⚡%.0f"):format(
-            coinCount, currentTarget and currentTarget.Name or "нет", speed)
+        statusLabel.Text = ("Собрано: %d/%d | видно: %d | ⚡%.0f"):format(
+            totalCollected, COLLECT_CAP, coinCount, speed)
     end
 
     if currentTarget and not currentTarget.Parent then
@@ -276,10 +338,24 @@ RunService.Heartbeat:Connect(function(dt)
     hrp.AssemblyLinearVelocity  = Vector3.zero
     hrp.AssemblyAngularVelocity = Vector3.zero
 
-    if stepToward(currentTarget, dt) then
+    local finished, reached = stepToward(currentTarget, dt)
+    if finished then
         blacklist[currentTarget] = os.clock() + 6
         currentTarget = nil
         layAt(hrp.Position)
+
+        if reached then
+            totalCollected += 1
+            if totalCollected >= COLLECT_CAP then
+                totalCollected = 0
+                collectOn      = false
+                saved.on       = false
+                scanTimer      = 0
+                refreshButton()
+                setActive(false)
+                notify(("Собрано %d монет — выключился 💜"):format(COLLECT_CAP))
+            end
+        end
     end
 end)
 
@@ -355,7 +431,7 @@ minBtn.Font                   = Enum.Font.GothamBold
 minBtn.TextSize               = 18
 minBtn.Parent                 = header
 
-local btn = Instance.new("TextButton")
+btn = Instance.new("TextButton")
 btn.Size                   = UDim2.new(1, -24, 0, 42)
 btn.Position               = UDim2.new(0, 12, 0, 44)
 btn.BackgroundTransparency = 0.1
@@ -426,7 +502,7 @@ statusLabel.Text                   = "Монет: 0 | цель: нет"
 statusLabel.Parent                 = frame
 
 -- ─── GUI helpers ─────────────────────────────────────────
-local function refreshButton()
+refreshButton = function()
     if collectOn then
         btn.Text             = "⏹  Остановить"
         btn.BackgroundColor3 = Color3.fromRGB(100, 20, 60)
@@ -571,10 +647,16 @@ lp.CharacterAdded:Connect(function(newChar)
     humanoid = newChar:WaitForChild("Humanoid")
 
     disableNoclip()
+    hookHumanoidEvents(humanoid)
+
     noclipParts   = {}
     active        = false
     currentTarget = nil
+    -- fresh life/round: whatever was being chased or debounced no longer
+    -- applies, and we start counting coins from zero again rather than
+    -- silently carrying over state from the life that just ended
     blacklist     = {}
+    coinCount     = 0
     scanTimer     = 0
     lastSafeCFrame = hrp.CFrame
 end)
