@@ -1,6 +1,7 @@
 -- MM2 Coin Collector | Roblox | Murder Mystery 2
 -- Persistent on/off + speed, lobby-safe, lying flight, touch-and-go coins
 -- From scratch: raw Roblox API only
+-- v2: real speed scaling, anti-fallthrough safety net, throttled scans, cheaper noclip
 
 local Players          = game:GetService("Players")
 local RunService       = game:GetService("RunService")
@@ -31,10 +32,22 @@ local store = (typeof(getgenv) == "function" and getgenv()) or _G
 store.MM2Collector = store.MM2Collector or { on = false, speed = 1 }
 local saved = store.MM2Collector
 
+-- ─── speed model ──────────────────────────────────────────
+-- Slider value IS studs/sec now. No hidden scale factor: moving the
+-- slider actually moves the character faster/slower 1:1.
+local SPEED_MIN, SPEED_MAX = 4, 120
+
+local function clampSpeed(s)
+    return math.clamp(tonumber(s) or SPEED_MIN, SPEED_MIN, SPEED_MAX)
+end
+
 local collectOn     = saved.on
-local speed         = saved.speed
+local speed         = clampSpeed(saved.speed)
+saved.speed         = speed -- normalize any bad/old saved value immediately
+
 local active        = false
-local noclipConn    = nil
+local noclipParts   = {}   -- [BasePart] = true, tracked set instead of rescanning every tick
+local noclipConns   = {}   -- per-character connections (Stepped + DescendantAdded)
 local currentTarget = nil
 local coinCount     = 0
 local statusLabel   = nil
@@ -42,27 +55,71 @@ local blacklist     = {}
 local facing        = Vector3.new(0, 0, -1)
 local LYING         = CFrame.Angles(math.rad(-90), 0, 0)
 
--- ─── noclip ──────────────────────────────────────────────
+-- last confirmed grounded, upright, collidable position — our fallback
+-- if we ever end up somewhere broken (under the map, stuck in geometry)
+local lastSafeCFrame = hrp.CFrame
+local UNDER_MAP_DROP = 40 -- studs below lastSafeCFrame.Y considered "fell through"
+
+-- ─── noclip (cheap: tag parts once, no per-tick GetDescendants scan) ──
+local function trackPart(part)
+    if part:IsA("BasePart") and not noclipParts[part] then
+        noclipParts[part] = true
+    end
+end
+
 local function enableNoclip()
-    noclipConn = RunService.Stepped:Connect(function()
-        for _, part in ipairs(char:GetDescendants()) do
-            if part:IsA("BasePart") then
+    for _, part in ipairs(char:GetDescendants()) do
+        trackPart(part)
+    end
+
+    noclipConns.added = char.DescendantAdded:Connect(function(part)
+        trackPart(part)
+        if active and part:IsA("BasePart") then
+            part.CanCollide = false
+        end
+    end)
+
+    noclipConns.stepped = RunService.Stepped:Connect(function()
+        for part in pairs(noclipParts) do
+            if part.Parent then
                 part.CanCollide = false
+            else
+                noclipParts[part] = nil -- part got destroyed, stop tracking it
             end
         end
     end)
 end
 
 local function disableNoclip()
-    if noclipConn then
-        noclipConn:Disconnect()
-        noclipConn = nil
+    if noclipConns.stepped then
+        noclipConns.stepped:Disconnect()
+        noclipConns.stepped = nil
     end
-    for _, part in ipairs(char:GetDescendants()) do
-        if part:IsA("BasePart") then
+    if noclipConns.added then
+        noclipConns.added:Disconnect()
+        noclipConns.added = nil
+    end
+    for part in pairs(noclipParts) do
+        if part.Parent then
             part.CanCollide = true
         end
     end
+end
+
+-- ─── anti-fallthrough: raycast for a safe landing spot ────
+local function findSafeLanding(fromPos)
+    local params = RaycastParams.new()
+    params.FilterType = Enum.RaycastFilterType.Exclude
+    params.FilterDescendantsInstances = { char }
+
+    local result = workspace:Raycast(fromPos, Vector3.new(0, -500, 0), params)
+    if result then
+        return result.Position + Vector3.new(0, 3, 0)
+    end
+
+    -- nothing below at all (open void) — fall back to the last known
+    -- good spot rather than leaving the character in freefall forever
+    return lastSafeCFrame.Position
 end
 
 -- on = lying + noclip + flight allowed, off = normal character
@@ -72,16 +129,32 @@ local function setActive(on)
         return
     end
     active = on
+
     if on then
         enableNoclip()
         humanoid.PlatformStand = true
     else
+        -- straighten up BEFORE restoring collision, and if we're way
+        -- below our last safe height, recover to a real surface first.
+        -- This is what used to let the ragdoll-under-the-map happen:
+        -- CanCollide flipped true while still rotated 90° and clipped
+        -- into geometry. Fix order: unrotate -> verify ground -> collide.
+        local pos = hrp.Position
+        if pos.Y < lastSafeCFrame.Position.Y - UNDER_MAP_DROP then
+            pos = findSafeLanding(lastSafeCFrame.Position + Vector3.new(0, 10, 0))
+        end
+
+        hrp.CFrame = CFrame.lookAt(pos, pos + facing)
         disableNoclip()
         humanoid.PlatformStand = false
+        lastSafeCFrame = hrp.CFrame
     end
 end
 
--- ─── coin detection ──────────────────────────────────────
+-- ─── coin detection (throttled — no full workspace scan every frame) ──
+local SCAN_INTERVAL = 0.15
+local scanTimer = 0
+
 local function getCoinRoot()
     return workspace:FindFirstChild("CoinContainer") or workspace
 end
@@ -100,7 +173,7 @@ local function coinPos(obj)
     return obj:GetPivot().Position
 end
 
-local function getNearestCoin()
+local function scanCoins()
     local root = getCoinRoot()
     coinCount = 0
     if not root then return nil end
@@ -134,9 +207,6 @@ local function isAlive()
         and humanoid.Health > 0
 end
 
-local SPEED_SCALE = 0.1
-local SPEED_MIN, SPEED_MAX = 0.1, 40
-
 local function stepToward(targetPart, dt)
     if not targetPart or not targetPart.Parent then
         return true
@@ -155,7 +225,10 @@ local function stepToward(targetPart, dt)
         facing = flat.Unit
     end
 
-    local newPos = origin + delta.Unit * math.min(speed * SPEED_SCALE * dt, dist)
+    -- speed is now studs/sec directly, clamped every use so a corrupted
+    -- saved value (old save, external tamper) can never exceed SPEED_MAX
+    local step   = math.min(clampSpeed(speed) * dt, dist)
+    local newPos = origin + delta.Unit * step
 
     hrp.AssemblyLinearVelocity  = Vector3.zero
     hrp.AssemblyAngularVelocity = Vector3.zero
@@ -171,8 +244,15 @@ RunService.Heartbeat:Connect(function(dt)
         return
     end
 
+    if not active then
+        -- we're grounded and idle right now — remember this as a good
+        -- recovery point before we start flying again
+        lastSafeCFrame = hrp.CFrame
+    end
+
     if statusLabel then
-        statusLabel.Text = ("Монет: %d | цель: %s"):format(coinCount, currentTarget and currentTarget.Name or "нет")
+        statusLabel.Text = ("Монет: %d | цель: %s | ⚡%.0f"):format(
+            coinCount, currentTarget and currentTarget.Name or "нет", speed)
     end
 
     if currentTarget and not currentTarget.Parent then
@@ -180,7 +260,11 @@ RunService.Heartbeat:Connect(function(dt)
     end
 
     if not currentTarget then
-        currentTarget = getNearestCoin()
+        scanTimer -= dt
+        if scanTimer <= 0 then
+            scanTimer = SCAN_INTERVAL
+            currentTarget = scanCoins()
+        end
     end
 
     if not currentTarget then
@@ -363,8 +447,8 @@ end
 local function showSpeed(ratio)
     sliderFill.Size   = UDim2.new(ratio, 0, 1, 0)
     knob.Position     = UDim2.new(ratio, 0, 0.5, 0)
-    speedLabel.Text   = ("⚡ Скорость: %.1f"):format(speed)
-    warnLabel.Visible = speed > 20
+    speedLabel.Text   = ("⚡ Скорость: %.0f studs/s"):format(speed)
+    warnLabel.Visible = speed > 60
 end
 
 local function setSpeedFromX(x)
@@ -372,7 +456,7 @@ local function setSpeedFromX(x)
     local trackW = sliderTrack.AbsoluteSize.X
     local ratio  = math.clamp((x - trackX) / trackW, 0, 1)
 
-    speed       = math.max(SPEED_MIN, math.floor(ratioToSpeed(ratio) * 10 + 0.5) / 10)
+    speed       = clampSpeed(math.floor(ratioToSpeed(ratio) + 0.5))
     saved.speed = speed
     showSpeed(speedToRatio(speed))
 end
@@ -416,6 +500,7 @@ btn.MouseButton1Click:Connect(function()
     collectOn   = not collectOn
     saved.on    = collectOn
     currentTarget = nil
+    scanTimer = 0
     refreshButton()
 end)
 
@@ -485,11 +570,11 @@ lp.CharacterAdded:Connect(function(newChar)
     hrp      = newChar:WaitForChild("HumanoidRootPart")
     humanoid = newChar:WaitForChild("Humanoid")
 
-    if noclipConn then
-        noclipConn:Disconnect()
-        noclipConn = nil
-    end
+    disableNoclip()
+    noclipParts   = {}
     active        = false
     currentTarget = nil
     blacklist     = {}
+    scanTimer     = 0
+    lastSafeCFrame = hrp.CFrame
 end)
