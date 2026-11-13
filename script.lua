@@ -45,14 +45,16 @@ end
 local function isValidCoin(obj)
     if not obj or not obj.Parent then return false end
     if not obj:IsA("BasePart") then return false end
+    if obj.Transparency >= 1 then return false end
     return obj.Name:lower():find("coin") ~= nil
 end
 
 local function getNearestCoin()
     local best, bestDist = nil, math.huge
     local origin = hrp.Position
+    local root   = workspace:FindFirstChild("CoinContainer") or workspace
 
-    for _, obj in ipairs(workspace:GetDescendants()) do
+    for _, obj in ipairs(root:GetDescendants()) do
         if isValidCoin(obj) then
             local d = (obj.Position - origin).Magnitude
             if d < bestDist then
@@ -65,13 +67,15 @@ local function getNearestCoin()
 end
 
 -- ─── movement ────────────────────────────────────────────
+local HOVER_OFFSET = Vector3.new(0, 3, 0)
+
 local function stepToward(targetPart)
     if not targetPart or not targetPart.Parent then
         return true
     end
 
     local origin = hrp.Position
-    local goal   = targetPart.Position
+    local goal   = targetPart.Position + HOVER_OFFSET
     local delta  = goal - origin
     local dist   = delta.Magnitude
 
@@ -82,7 +86,9 @@ local function stepToward(targetPart)
     local step   = math.min(speed, dist)
     local newPos = origin + delta.Unit * step
 
-    hrp.CFrame = CFrame.new(newPos, goal)
+    hrp.AssemblyLinearVelocity  = Vector3.zero
+    hrp.AssemblyAngularVelocity = Vector3.zero
+    hrp.CFrame = CFrame.new(newPos, newPos + delta)
     return false
 end
 
@@ -315,16 +321,39 @@ warnLabel.Parent                = frame
 -- ─── slider drag ─────────────────────────────────────────
 local sliderDragging = false
 
+local function setSpeedFromX(x)
+    local trackX = sliderTrack.AbsolutePosition.X
+    local trackW = sliderTrack.AbsoluteSize.X
+    local ratio  = math.clamp((x - trackX) / trackW, 0, 1)
+
+    speed = math.max(1, math.floor(ratio * 40 + 0.5))
+
+    sliderFill.Size   = UDim2.new(ratio, 0, 1, 0)
+    knob.Position     = UDim2.new(ratio, 0, 0.5, 0)
+    speedLabel.Text   = "⚡ Скорость: " .. speed
+    warnLabel.Visible = speed > 20
+end
+
+local function isPress(input)
+    return input.UserInputType == Enum.UserInputType.MouseButton1
+        or input.UserInputType == Enum.UserInputType.Touch
+end
+
+sliderTrack.InputBegan:Connect(function(input)
+    if isPress(input) then
+        sliderDragging = true
+        setSpeedFromX(input.Position.X)
+    end
+end)
+
 knob.InputBegan:Connect(function(input)
-    if input.UserInputType == Enum.UserInputType.MouseButton1
-       or input.UserInputType == Enum.UserInputType.Touch then
+    if isPress(input) then
         sliderDragging = true
     end
 end)
 
 UserInputService.InputEnded:Connect(function(input)
-    if input.UserInputType == Enum.UserInputType.MouseButton1
-       or input.UserInputType == Enum.UserInputType.Touch then
+    if isPress(input) then
         sliderDragging = false
     end
 end)
@@ -333,17 +362,7 @@ UserInputService.InputChanged:Connect(function(input)
     if not sliderDragging then return end
     if input.UserInputType ~= Enum.UserInputType.MouseMovement
        and input.UserInputType ~= Enum.UserInputType.Touch then return end
-
-    local trackX = sliderTrack.AbsolutePosition.X
-    local trackW = sliderTrack.AbsoluteSize.X
-    local ratio  = math.clamp((input.Position.X - trackX) / trackW, 0, 1)
-
-    speed = math.max(1, math.floor(ratio * 40))
-
-    sliderFill.Size   = UDim2.new(ratio, 0, 1, 0)
-    knob.Position     = UDim2.new(ratio, 0, 0.5, 0)
-    speedLabel.Text   = "⚡ Скорость: " .. speed
-    warnLabel.Visible = speed > 20
+    setSpeedFromX(input.Position.X)
 end)
 
 -- ─── start/stop ──────────────────────────────────────────
